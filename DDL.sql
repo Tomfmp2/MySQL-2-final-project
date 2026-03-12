@@ -131,3 +131,65 @@ CREATE TABLE `inventario` (
   PRIMARY KEY (`producto_id`, `bodega_id`),
   INDEX `idx_inventario_stock` (`cantidad`)
 );
+
+-- ==========================================================
+-- 4. MÓDULO DE COMPRAS
+-- ==========================================================
+
+CREATE TABLE `proveedores` (
+  `id` int PRIMARY KEY AUTO_INCREMENT,
+  `tipo_documento_id` int NOT NULL,
+  `num_documento` varchar(20) UNIQUE NOT NULL,
+  `razon_social` varchar(150) NOT NULL,
+  `direccion` varchar(200) NOT NULL,
+  `ciudad_id` int NOT NULL,
+  `telefono` varchar(20) NOT NULL,
+  `email` varchar(100) NOT NULL,
+  `estado` ENUM('0','1') NOT NULL DEFAULT '1'
+);
+
+CREATE TABLE `proveedor_producto` (
+  `proveedor_id` int NOT NULL,
+  `producto_id` int NOT NULL,
+  PRIMARY KEY (`proveedor_id`, `producto_id`)
+);
+
+CREATE TABLE `factura_compra` (
+  `id` int PRIMARY KEY AUTO_INCREMENT,
+  `proveedor_id` int NOT NULL,
+  `usuario_id` int NOT NULL,
+  `fecha` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `tipo_pago_id` int NOT NULL,
+  `num_factura` varchar(50) UNIQUE NOT NULL,
+  `estado` ENUM('0','1') NOT NULL DEFAULT '1',
+  `observaciones` text,
+  INDEX `idx_compra_fecha` (`fecha`)
+);
+
+CREATE TABLE `detalle_factura_compra` (
+  `id` int PRIMARY KEY AUTO_INCREMENT,
+  `factura_compra_id` int NOT NULL,
+  `producto_id` int NOT NULL,
+  `bodega_id` int NOT NULL,
+  `cantidad` int NOT NULL,
+  `valor_unitario` decimal(15,2) NOT NULL,
+  `iva` decimal(5,2) NOT NULL,
+  INDEX `idx_det_compra_prod` (`producto_id`)
+);
+
+CREATE TABLE `devolucion_compra` (
+  `id` int PRIMARY KEY AUTO_INCREMENT,
+  `factura_compra_id` int NOT NULL,
+  `usuario_id` int NOT NULL,
+  `fecha` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `observaciones` text,
+  INDEX `idx_devcom_fecha` (`fecha`)
+);
+
+CREATE TABLE `detalle_devolucion_compra` (
+  `id` int PRIMARY KEY AUTO_INCREMENT,
+  `devolucion_compra_id` int NOT NULL,
+  `detalle_factura_compra_id` int NOT NULL,
+  `cantidad` int NOT NULL
+);
+
