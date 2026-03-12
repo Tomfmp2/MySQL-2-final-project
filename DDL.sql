@@ -308,3 +308,228 @@ CREATE TABLE `detalle_devolucion_venta` (
   `cantidad` int NOT NULL
 );
 
+-- ==========================================================
+-- 6. REGLAS DE NEGOCIO
+-- ==========================================================
+
+CREATE TABLE `garantias` (
+  `id` int PRIMARY KEY AUTO_INCREMENT,
+  `detalle_venta_id` int NOT NULL,
+  `tipo` ENUM('empresa','proveedor') NOT NULL,
+  `meses` int NOT NULL,
+  `fecha_inicio` date NOT NULL,
+  `fecha_fin` date NOT NULL,
+  INDEX `idx_garantia_venta` (`detalle_venta_id`)
+);
+
+CREATE TABLE `reporte_rotacion_producto` (
+  `id` int PRIMARY KEY AUTO_INCREMENT,
+  `periodo` date NOT NULL,
+  `producto_id` int NOT NULL,
+  `nombre_producto` varchar(50) NOT NULL,
+  `unidades_vendidas` int NOT NULL DEFAULT 0,
+  `unidades_compradas` int NOT NULL DEFAULT 0,
+  `stock_final` int NOT NULL DEFAULT 0,
+  `rotacion` decimal(10,4) NOT NULL DEFAULT 0.0000,
+  UNIQUE KEY `uq_rotacion_periodo_prod` (`periodo`, `producto_id`)
+);
+
+-- ==========================================================
+-- 7. LOGS
+-- ==========================================================
+
+CREATE TABLE `logs` (
+  `id` int PRIMARY KEY AUTO_INCREMENT,
+  `fecha` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `usuario_id` int NULL,
+  `tabla` varchar(50) NOT NULL,
+  `operacion` ENUM('INSERT','UPDATE','DELETE','SELECT','ERROR') NOT NULL,
+  `registro_id` int NULL,
+  `descripcion` text NOT NULL,
+  `dato_anterior` JSON NULL,
+  `dato_nuevo` JSON NULL,
+  `ip` varchar(45) NULL,
+  `nivel` ENUM('INFO','WARNING','ERROR') NOT NULL DEFAULT 'INFO',
+  INDEX `idx_log_fecha`     (`fecha`),
+  INDEX `idx_log_tabla`     (`tabla`),
+  INDEX `idx_log_nivel`     (`nivel`),
+  INDEX `idx_log_usuario`   (`usuario_id`),
+  INDEX `idx_log_operacion` (`operacion`)
+);
+
+-- ==========================================================
+-- 8. FOREIGN KEYS
+-- ==========================================================
+
+-- Seguridad
+ALTER TABLE `permisos`
+  ADD CONSTRAINT `fk_permiso_modulo`
+    FOREIGN KEY (`modulo_id`) REFERENCES `modulos`(`id`);
+
+ALTER TABLE `usuarios`
+  ADD CONSTRAINT `fk_usuario_rol_principal`
+    FOREIGN KEY (`rol_principal_id`) REFERENCES `roles`(`id`),
+  ADD CONSTRAINT `fk_usuario_tipo_doc`
+    FOREIGN KEY (`tipo_documento_id`) REFERENCES `tipo_documento`(`id`),
+  ADD CONSTRAINT `fk_usuario_ciudad`
+    FOREIGN KEY (`ciudad_id`) REFERENCES `ciudades`(`id`);
+
+ALTER TABLE `rol_permiso`
+  ADD CONSTRAINT `fk_rolpermiso_rol`
+    FOREIGN KEY (`rol_id`) REFERENCES `roles`(`id`),
+  ADD CONSTRAINT `fk_rolpermiso_permiso`
+    FOREIGN KEY (`permiso_id`) REFERENCES `permisos`(`id`);
+
+ALTER TABLE `usuario_rol`
+  ADD CONSTRAINT `fk_usuariorol_usuario`
+    FOREIGN KEY (`usuario_id`) REFERENCES `usuarios`(`id`),
+  ADD CONSTRAINT `fk_usuariorol_rol`
+    FOREIGN KEY (`rol_id`) REFERENCES `roles`(`id`);
+
+ALTER TABLE `usuario_permiso`
+  ADD CONSTRAINT `fk_usuariopermiso_usuario`
+    FOREIGN KEY (`usuario_id`) REFERENCES `usuarios`(`id`),
+  ADD CONSTRAINT `fk_usuariopermiso_permiso`
+    FOREIGN KEY (`permiso_id`) REFERENCES `permisos`(`id`);
+
+-- Inventario
+ALTER TABLE `productos`
+  ADD CONSTRAINT `fk_producto_categoria`
+    FOREIGN KEY (`categoria_id`) REFERENCES `categoria`(`id`);
+
+ALTER TABLE `bodegas`
+  ADD CONSTRAINT `fk_bodega_ciudad`
+    FOREIGN KEY (`ciudad_id`) REFERENCES `ciudades`(`id`);
+
+ALTER TABLE `inventario`
+  ADD CONSTRAINT `fk_inventario_producto`
+    FOREIGN KEY (`producto_id`) REFERENCES `productos`(`id`),
+  ADD CONSTRAINT `fk_inventario_bodega`
+    FOREIGN KEY (`bodega_id`) REFERENCES `bodegas`(`id`);
+
+-- Compras
+ALTER TABLE `proveedores`
+  ADD CONSTRAINT `fk_proveedor_tipodoc`
+    FOREIGN KEY (`tipo_documento_id`) REFERENCES `tipo_documento`(`id`),
+  ADD CONSTRAINT `fk_proveedor_ciudad`
+    FOREIGN KEY (`ciudad_id`) REFERENCES `ciudades`(`id`);
+
+ALTER TABLE `proveedor_producto`
+  ADD CONSTRAINT `fk_provprod_proveedor`
+    FOREIGN KEY (`proveedor_id`) REFERENCES `proveedores`(`id`),
+  ADD CONSTRAINT `fk_provprod_producto`
+    FOREIGN KEY (`producto_id`) REFERENCES `productos`(`id`);
+
+ALTER TABLE `factura_compra`
+  ADD CONSTRAINT `fk_fcompra_proveedor`
+    FOREIGN KEY (`proveedor_id`) REFERENCES `proveedores`(`id`),
+  ADD CONSTRAINT `fk_fcompra_usuario`
+    FOREIGN KEY (`usuario_id`) REFERENCES `usuarios`(`id`),
+  ADD CONSTRAINT `fk_fcompra_tipopago`
+    FOREIGN KEY (`tipo_pago_id`) REFERENCES `tipo_pago`(`id`);
+
+ALTER TABLE `detalle_factura_compra`
+  ADD CONSTRAINT `fk_detcompra_factura`
+    FOREIGN KEY (`factura_compra_id`) REFERENCES `factura_compra`(`id`),
+  ADD CONSTRAINT `fk_detcompra_producto`
+    FOREIGN KEY (`producto_id`) REFERENCES `productos`(`id`),
+  ADD CONSTRAINT `fk_detcompra_bodega`
+    FOREIGN KEY (`bodega_id`) REFERENCES `bodegas`(`id`);
+
+ALTER TABLE `devolucion_compra`
+  ADD CONSTRAINT `fk_devcom_factura`
+    FOREIGN KEY (`factura_compra_id`) REFERENCES `factura_compra`(`id`),
+  ADD CONSTRAINT `fk_devcom_usuario`
+    FOREIGN KEY (`usuario_id`) REFERENCES `usuarios`(`id`);
+
+ALTER TABLE `detalle_devolucion_compra`
+  ADD CONSTRAINT `fk_detdevcom_devolucion`
+    FOREIGN KEY (`devolucion_compra_id`) REFERENCES `devolucion_compra`(`id`),
+  ADD CONSTRAINT `fk_detdevcom_detalle`
+    FOREIGN KEY (`detalle_factura_compra_id`) REFERENCES `detalle_factura_compra`(`id`);
+
+-- Ventas
+ALTER TABLE `clientes`
+  ADD CONSTRAINT `fk_cliente_tipodoc`
+    FOREIGN KEY (`tipo_documento_id`) REFERENCES `tipo_documento`(`id`),
+  ADD CONSTRAINT `fk_cliente_tipoemail`
+    FOREIGN KEY (`tipo_email_id`) REFERENCES `tipo_email`(`id`),
+  ADD CONSTRAINT `fk_cliente_ciudad`
+    FOREIGN KEY (`ciudad_id`) REFERENCES `ciudades`(`id`);
+
+ALTER TABLE `personas`
+  ADD CONSTRAINT `fk_persona_cliente`
+    FOREIGN KEY (`cliente_id`) REFERENCES `clientes`(`id`);
+
+ALTER TABLE `empresas`
+  ADD CONSTRAINT `fk_empresa_cliente`
+    FOREIGN KEY (`cliente_id`) REFERENCES `clientes`(`id`);
+
+ALTER TABLE `num_telefonico`
+  ADD CONSTRAINT `fk_numtel_cliente`
+    FOREIGN KEY (`cliente_id`) REFERENCES `clientes`(`id`);
+
+ALTER TABLE `descuentos_cliente`
+  ADD CONSTRAINT `fk_descuento_cliente`
+    FOREIGN KEY (`cliente_id`) REFERENCES `clientes`(`id`);
+
+ALTER TABLE `asesores_comerciales`
+  ADD CONSTRAINT `fk_asesor_tipodoc`
+    FOREIGN KEY (`tipo_documento_id`) REFERENCES `tipo_documento`(`id`),
+  ADD CONSTRAINT `fk_asesor_ciudad`
+    FOREIGN KEY (`ciudad_id`) REFERENCES `ciudades`(`id`);
+
+ALTER TABLE `asesor_producto`
+  ADD CONSTRAINT `fk_asesprod_asesor`
+    FOREIGN KEY (`asesor_id`) REFERENCES `asesores_comerciales`(`id`),
+  ADD CONSTRAINT `fk_asesprod_producto`
+    FOREIGN KEY (`producto_id`) REFERENCES `productos`(`id`);
+
+ALTER TABLE `comisiones_asesor`
+  ADD CONSTRAINT `fk_comision_asesor`
+    FOREIGN KEY (`asesor_id`) REFERENCES `asesores_comerciales`(`id`);
+
+ALTER TABLE `factura_venta`
+  ADD CONSTRAINT `fk_fventa_cliente`
+    FOREIGN KEY (`cliente_id`) REFERENCES `clientes`(`id`),
+  ADD CONSTRAINT `fk_fventa_asesor`
+    FOREIGN KEY (`asesor_id`) REFERENCES `asesores_comerciales`(`id`),
+  ADD CONSTRAINT `fk_fventa_usuario`
+    FOREIGN KEY (`usuario_id`) REFERENCES `usuarios`(`id`),
+  ADD CONSTRAINT `fk_fventa_tipopago`
+    FOREIGN KEY (`tipo_pago_id`) REFERENCES `tipo_pago`(`id`);
+
+ALTER TABLE `detalle_factura_venta`
+  ADD CONSTRAINT `fk_detventa_factura`
+    FOREIGN KEY (`factura_venta_id`) REFERENCES `factura_venta`(`id`),
+  ADD CONSTRAINT `fk_detventa_producto`
+    FOREIGN KEY (`producto_id`) REFERENCES `productos`(`id`),
+  ADD CONSTRAINT `fk_detventa_bodega`
+    FOREIGN KEY (`bodega_id`) REFERENCES `bodegas`(`id`);
+
+ALTER TABLE `devolucion_venta`
+  ADD CONSTRAINT `fk_devvta_factura`
+    FOREIGN KEY (`factura_venta_id`) REFERENCES `factura_venta`(`id`),
+  ADD CONSTRAINT `fk_devvta_usuario`
+    FOREIGN KEY (`usuario_id`) REFERENCES `usuarios`(`id`);
+
+ALTER TABLE `detalle_devolucion_venta`
+  ADD CONSTRAINT `fk_detdevvta_devolucion`
+    FOREIGN KEY (`devolucion_venta_id`) REFERENCES `devolucion_venta`(`id`),
+  ADD CONSTRAINT `fk_detdevvta_detalle`
+    FOREIGN KEY (`detalle_factura_venta_id`) REFERENCES `detalle_factura_venta`(`id`);
+
+-- Reglas de negocio
+ALTER TABLE `garantias`
+  ADD CONSTRAINT `fk_garantia_detventa`
+    FOREIGN KEY (`detalle_venta_id`) REFERENCES `detalle_factura_venta`(`id`);
+
+ALTER TABLE `reporte_rotacion_producto`
+  ADD CONSTRAINT `fk_rotacion_producto`
+    FOREIGN KEY (`producto_id`) REFERENCES `productos`(`id`);
+
+-- Logs (FK nullable, no bloquea si usuario es NULL)
+ALTER TABLE `logs`
+  ADD CONSTRAINT `fk_log_usuario`
+    FOREIGN KEY (`usuario_id`) REFERENCES `usuarios`(`id`);
+
