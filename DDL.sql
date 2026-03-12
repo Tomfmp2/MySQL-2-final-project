@@ -193,3 +193,118 @@ CREATE TABLE `detalle_devolucion_compra` (
   `cantidad` int NOT NULL
 );
 
+-- ==========================================================
+-- 5. MÓDULO DE VENTAS
+-- ==========================================================
+
+CREATE TABLE `clientes` (
+  `id` int PRIMARY KEY AUTO_INCREMENT,
+  `tipo_documento_id` int NOT NULL,
+  `num_documento` varchar(20) UNIQUE NOT NULL,
+  `nombre_email` varchar(100) NOT NULL,
+  `tipo_email_id` int NOT NULL,
+  `direccion` varchar(200) NOT NULL,
+  `ciudad_id` int NOT NULL,
+  `genero` ENUM('M','F','Otro') NULL,
+  `estado` ENUM('0','1') NOT NULL DEFAULT '1',
+  INDEX `idx_cliente_doc` (`num_documento`)
+);
+
+CREATE TABLE `personas` (
+  `cliente_id` int PRIMARY KEY,
+  `nombre` varchar(50) NOT NULL,
+  `apellido` varchar(50) NOT NULL
+);
+
+CREATE TABLE `empresas` (
+  `cliente_id` int PRIMARY KEY,
+  `nombre` varchar(100) NOT NULL,
+  `representante` varchar(50) NOT NULL
+);
+
+CREATE TABLE `num_telefonico` (
+  `id` int PRIMARY KEY AUTO_INCREMENT,
+  `telefono` varchar(20) NOT NULL,
+  `cliente_id` int NOT NULL,
+  INDEX `idx_numtel_cliente` (`cliente_id`)
+);
+
+CREATE TABLE `descuentos_cliente` (
+  `id` int PRIMARY KEY AUTO_INCREMENT,
+  `cliente_id` int NOT NULL,
+  `porcentaje` decimal(5,2) NOT NULL,
+  `monto_minimo` decimal(15,2) NOT NULL DEFAULT 0.00,
+  `activo` TINYINT(1) NOT NULL DEFAULT 1,
+  `fecha_aplicacion` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  INDEX `idx_desc_cliente` (`cliente_id`)
+);
+
+CREATE TABLE `asesores_comerciales` (
+  `id` int PRIMARY KEY AUTO_INCREMENT,
+  `tipo_documento_id` int NOT NULL,
+  `num_documento` varchar(20) UNIQUE NOT NULL,
+  `razon_social` varchar(150) NOT NULL,
+  `direccion` varchar(200) NOT NULL,
+  `ciudad_id` int NOT NULL,
+  `telefono` varchar(20) NOT NULL,
+  `email` varchar(100) NOT NULL,
+  `estado` ENUM('0','1') NOT NULL DEFAULT '1'
+);
+
+CREATE TABLE `asesor_producto` (
+  `asesor_id` int NOT NULL,
+  `producto_id` int NOT NULL,
+  PRIMARY KEY (`asesor_id`, `producto_id`)
+);
+
+CREATE TABLE `comisiones_asesor` (
+  `id` int PRIMARY KEY AUTO_INCREMENT,
+  `asesor_id` int NOT NULL,
+  `periodo` date NOT NULL,
+  `total_ventas` decimal(15,2) NOT NULL DEFAULT 0.00,
+  `porcentaje` decimal(5,2) NOT NULL DEFAULT 0.00,
+  `valor` decimal(15,2) NOT NULL DEFAULT 0.00,
+  UNIQUE KEY `uq_asesor_periodo` (`asesor_id`, `periodo`)
+);
+
+CREATE TABLE `factura_venta` (
+  `id` int PRIMARY KEY AUTO_INCREMENT,
+  `cliente_id` int NOT NULL,
+  `asesor_id` int NULL,
+  `usuario_id` int NOT NULL,
+  `fecha` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `tipo_pago_id` int NOT NULL,
+  `num_factura` varchar(50) UNIQUE NOT NULL,
+  `descuento_porcentaje` decimal(5,2) NOT NULL DEFAULT 0.00,
+  `estado` ENUM('0','1') NOT NULL DEFAULT '1',
+  `observaciones` text,
+  INDEX `idx_venta_asesor_mes` (`fecha`, `asesor_id`)
+);
+
+CREATE TABLE `detalle_factura_venta` (
+  `id` int PRIMARY KEY AUTO_INCREMENT,
+  `factura_venta_id` int NOT NULL,
+  `producto_id` int NOT NULL,
+  `bodega_id` int NOT NULL,
+  `cantidad` int NOT NULL,
+  `valor_unitario` decimal(15,2) NOT NULL,
+  `iva` decimal(5,2) NOT NULL,
+  INDEX `idx_det_venta_prod` (`producto_id`)
+);
+
+CREATE TABLE `devolucion_venta` (
+  `id` int PRIMARY KEY AUTO_INCREMENT,
+  `factura_venta_id` int NOT NULL,
+  `usuario_id` int NOT NULL,
+  `fecha` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `observaciones` text,
+  INDEX `idx_devvta_fecha` (`fecha`)
+);
+
+CREATE TABLE `detalle_devolucion_venta` (
+  `id` int PRIMARY KEY AUTO_INCREMENT,
+  `devolucion_venta_id` int NOT NULL,
+  `detalle_factura_venta_id` int NOT NULL,
+  `cantidad` int NOT NULL
+);
+
