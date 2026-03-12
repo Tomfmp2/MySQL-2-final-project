@@ -121,3 +121,504 @@ BEGIN
 END$$
 
 
+-- ==========================================================
+-- MÓDULO: CLIENTES
+-- Necesita: Crear persona, Crear empresa, Actualizar, Desactivar, Leer
+-- NO eliminar: clientes con historial de ventas no se borran
+-- ==========================================================
+
+CREATE PROCEDURE sp_crear_cliente_persona(
+    IN p_tipo_doc_id  INT,
+    IN p_num_doc      VARCHAR(20),
+    IN p_nombre_email VARCHAR(100),
+    IN p_tipo_email_id INT,
+    IN p_direccion    VARCHAR(200),
+    IN p_ciudad_id    INT,
+    IN p_genero       ENUM('M','F','Otro'),
+    IN p_nombre       VARCHAR(50),
+    IN p_apellido     VARCHAR(50),
+    IN p_telefono     VARCHAR(20),
+    OUT p_nuevo_id    INT
+)
+BEGIN
+    INSERT INTO clientes(
+        tipo_documento_id, num_documento, nombre_email,
+        tipo_email_id, direccion, ciudad_id, genero
+    ) VALUES(
+        p_tipo_doc_id, p_num_doc, p_nombre_email,
+        p_tipo_email_id, p_direccion, p_ciudad_id, p_genero
+    );
+
+    SET p_nuevo_id = LAST_INSERT_ID();
+
+    INSERT INTO personas(cliente_id, nombre, apellido)
+    VALUES(p_nuevo_id, p_nombre, p_apellido);
+
+    INSERT INTO num_telefonico(telefono, cliente_id)
+    VALUES(p_telefono, p_nuevo_id);
+
+    INSERT INTO logs(usuario_id, tabla, operacion, registro_id, descripcion, nivel)
+    VALUES(NULL, 'clientes', 'INSERT', p_nuevo_id,
+           CONCAT('Cliente persona creado: ', p_nombre, ' ', p_apellido), 'INFO');
+END$$
+
+-- ─────────────────────────────────────────────────────────
+CREATE PROCEDURE sp_crear_cliente_empresa(
+    IN p_tipo_doc_id   INT,
+    IN p_num_doc       VARCHAR(20),
+    IN p_nombre_email  VARCHAR(100),
+    IN p_tipo_email_id INT,
+    IN p_direccion     VARCHAR(200),
+    IN p_ciudad_id     INT,
+    IN p_nombre_emp    VARCHAR(100),
+    IN p_representante VARCHAR(50),
+    IN p_telefono      VARCHAR(20),
+    OUT p_nuevo_id     INT
+)
+BEGIN
+    INSERT INTO clientes(
+        tipo_documento_id, num_documento, nombre_email,
+        tipo_email_id, direccion, ciudad_id
+    ) VALUES(
+        p_tipo_doc_id, p_num_doc, p_nombre_email,
+        p_tipo_email_id, p_direccion, p_ciudad_id
+    );
+
+    SET p_nuevo_id = LAST_INSERT_ID();
+
+    INSERT INTO empresas(cliente_id, nombre, representante)
+    VALUES(p_nuevo_id, p_nombre_emp, p_representante);
+
+    INSERT INTO num_telefonico(telefono, cliente_id)
+    VALUES(p_telefono, p_nuevo_id);
+
+    INSERT INTO logs(usuario_id, tabla, operacion, registro_id, descripcion, nivel)
+    VALUES(NULL, 'clientes', 'INSERT', p_nuevo_id,
+           CONCAT('Cliente empresa creado: ', p_nombre_emp), 'INFO');
+END$$
+
+-- ─────────────────────────────────────────────────────────
+CREATE PROCEDURE sp_actualizar_cliente(
+    IN p_id           INT,
+    IN p_nombre_email VARCHAR(100),
+    IN p_tipo_email_id INT,
+    IN p_direccion    VARCHAR(200),
+    IN p_ciudad_id    INT,
+    IN p_genero       ENUM('M','F','Otro'),
+    IN p_usuario_id   INT
+)
+BEGIN
+    UPDATE clientes SET
+        nombre_email   = p_nombre_email,
+        tipo_email_id  = p_tipo_email_id,
+        direccion      = p_direccion,
+        ciudad_id      = p_ciudad_id,
+        genero         = p_genero
+    WHERE id = p_id;
+
+    INSERT INTO logs(usuario_id, tabla, operacion, registro_id, descripcion, nivel)
+    VALUES(p_usuario_id, 'clientes', 'UPDATE', p_id,
+           CONCAT('Cliente actualizado ID: ', p_id), 'INFO');
+END$$
+
+-- ─────────────────────────────────────────────────────────
+CREATE PROCEDURE sp_desactivar_cliente(
+    IN p_id         INT,
+    IN p_usuario_id INT
+)
+BEGIN
+    UPDATE clientes SET estado = '0' WHERE id = p_id;
+
+    INSERT INTO logs(usuario_id, tabla, operacion, registro_id, descripcion, nivel)
+    VALUES(p_usuario_id, 'clientes', 'UPDATE', p_id,
+           CONCAT('Cliente desactivado ID: ', p_id), 'WARNING');
+END$$
+
+-- ─────────────────────────────────────────────────────────
+CREATE PROCEDURE sp_leer_cliente(IN p_id INT)
+BEGIN
+    SELECT
+        cl.id,
+        td.tipo                                              AS tipo_documento,
+        cl.num_documento,
+        COALESCE(CONCAT(pe.nombre,' ',pe.apellido), em.nombre) AS nombre_completo,
+        CASE WHEN pe.cliente_id IS NOT NULL THEN 'Persona' ELSE 'Empresa' END AS tipo_cliente,
+        em.representante,
+        cl.genero,
+        cl.direccion,
+        ci.nombre                                            AS ciudad,
+        CONCAT(cl.nombre_email,'@',te.tipo)                  AS email,
+        GROUP_CONCAT(nt.telefono SEPARATOR ', ')             AS telefonos,
+        cl.estado
+    FROM clientes cl
+    JOIN tipo_documento td ON td.id = cl.tipo_documento_id
+    JOIN tipo_email     te ON te.id = cl.tipo_email_id
+    JOIN ciudades       ci ON ci.id = cl.ciudad_id
+    LEFT JOIN personas  pe ON pe.cliente_id = cl.id
+    LEFT JOIN empresas  em ON em.cliente_id = cl.id
+    LEFT JOIN num_telefonico nt ON nt.cliente_id = cl.id
+    WHERE cl.id = p_id
+    GROUP BY cl.id;
+END$$
+
+
+-- ==========================================================
+-- MÓDULO: USUARIOS
+-- Necesita: Crear, Actualizar, Desactivar, Leer
+-- NO eliminar: auditoría requiere conservar usuarios
+-- ==========================================================
+
+CREATE PROCEDURE sp_crear_usuario(
+    IN p_rol_principal_id  INT,
+    IN p_tipo_doc_id       INT,
+    IN p_num_doc           VARCHAR(20),
+    IN p_nombres           VARCHAR(100),
+    IN p_apellidos         VARCHAR(100),
+    IN p_direccion         VARCHAR(200),
+    IN p_ciudad_id         INT,
+    IN p_telefono          VARCHAR(20),
+    IN p_email_personal    VARCHAR(100),
+    IN p_email_corporativo VARCHAR(100),
+    IN p_password_hash     VARCHAR(255),
+    OUT p_nuevo_id         INT
+)
+BEGIN
+    INSERT INTO usuarios(
+        rol_principal_id, tipo_documento_id, num_documento,
+        nombres, apellidos, direccion, ciudad_id,
+        telefono, email_personal, email_corporativo, password_hash
+    ) VALUES(
+        p_rol_principal_id, p_tipo_doc_id, p_num_doc,
+        p_nombres, p_apellidos, p_direccion, p_ciudad_id,
+        p_telefono, p_email_personal, p_email_corporativo, p_password_hash
+    );
+
+    SET p_nuevo_id = LAST_INSERT_ID();
+
+    -- Asignar rol principal automáticamente en tabla puente
+    INSERT INTO usuario_rol(usuario_id, rol_id)
+    VALUES(p_nuevo_id, p_rol_principal_id);
+
+    INSERT INTO logs(usuario_id, tabla, operacion, registro_id, descripcion, nivel)
+    VALUES(NULL, 'usuarios', 'INSERT', p_nuevo_id,
+           CONCAT('Usuario creado: ', p_email_corporativo), 'INFO');
+END$$
+
+-- ─────────────────────────────────────────────────────────
+CREATE PROCEDURE sp_actualizar_usuario(
+    IN p_id         INT,
+    IN p_nombres    VARCHAR(100),
+    IN p_apellidos  VARCHAR(100),
+    IN p_direccion  VARCHAR(200),
+    IN p_ciudad_id  INT,
+    IN p_telefono   VARCHAR(20),
+    IN p_foto_url   VARCHAR(255),
+    IN p_usuario_id INT   -- quien ejecuta la acción
+)
+BEGIN
+    UPDATE usuarios SET
+        nombres   = p_nombres,
+        apellidos = p_apellidos,
+        direccion = p_direccion,
+        ciudad_id = p_ciudad_id,
+        telefono  = p_telefono,
+        foto_url  = p_foto_url
+    WHERE id = p_id;
+
+    INSERT INTO logs(usuario_id, tabla, operacion, registro_id, descripcion, nivel)
+    VALUES(p_usuario_id, 'usuarios', 'UPDATE', p_id,
+           CONCAT('Usuario actualizado ID: ', p_id), 'INFO');
+END$$
+
+-- ─────────────────────────────────────────────────────────
+CREATE PROCEDURE sp_desactivar_usuario(
+    IN p_id         INT,
+    IN p_usuario_id INT
+)
+BEGIN
+    UPDATE usuarios SET estado = '0' WHERE id = p_id;
+
+    INSERT INTO logs(usuario_id, tabla, operacion, registro_id, descripcion, nivel)
+    VALUES(p_usuario_id, 'usuarios', 'UPDATE', p_id,
+           CONCAT('Usuario desactivado ID: ', p_id), 'WARNING');
+END$$
+
+
+-- ==========================================================
+-- MÓDULO: FACTURA DE VENTA
+-- Necesita: Crear (cabecera + líneas en transacción), Anular
+-- NO actualizar líneas: las facturas son documentos contables
+-- ==========================================================
+
+CREATE PROCEDURE sp_crear_factura_venta(
+    IN  p_cliente_id          INT,
+    IN  p_asesor_id           INT,
+    IN  p_usuario_id          INT,
+    IN  p_tipo_pago_id        INT,
+    IN  p_num_factura         VARCHAR(50),
+    IN  p_observaciones       TEXT,
+    OUT p_factura_id          INT
+)
+BEGIN
+    DECLARE v_descuento      DECIMAL(5,2) DEFAULT 0.00;
+    DECLARE v_total_acum     DECIMAL(15,2) DEFAULT 0.00;
+    DECLARE v_smlv           DECIMAL(15,2) DEFAULT 1423500.00;
+
+    -- Calcular descuento automático si cliente supera 200 millones acumulados
+    SELECT COALESCE(SUM(dfv.cantidad * dfv.valor_unitario * (1 + dfv.iva/100)), 0)
+    INTO v_total_acum
+    FROM factura_venta fv
+    JOIN detalle_factura_venta dfv ON dfv.factura_venta_id = fv.id
+    WHERE fv.cliente_id = p_cliente_id AND fv.estado = '1';
+
+    IF v_total_acum > 200000000 THEN
+        SET v_descuento = 5.00;
+    END IF;
+
+    -- Verificar si tiene descuento específico activo (sobreescribe el automático)
+    SELECT COALESCE(MAX(porcentaje), v_descuento)
+    INTO v_descuento
+    FROM descuentos_cliente
+    WHERE cliente_id = p_cliente_id AND activo = 1;
+
+    INSERT INTO factura_venta(
+        cliente_id, asesor_id, usuario_id, fecha,
+        tipo_pago_id, num_factura, descuento_porcentaje, observaciones
+    ) VALUES(
+        p_cliente_id, p_asesor_id, p_usuario_id, NOW(),
+        p_tipo_pago_id, p_num_factura, v_descuento, p_observaciones
+    );
+
+    SET p_factura_id = LAST_INSERT_ID();
+
+    INSERT INTO logs(usuario_id, tabla, operacion, registro_id, descripcion, nivel)
+    VALUES(p_usuario_id, 'factura_venta', 'INSERT', p_factura_id,
+           CONCAT('Factura venta creada: ', p_num_factura,
+                  ' | Descuento aplicado: ', v_descuento, '%'), 'INFO');
+END$$
+
+-- ─────────────────────────────────────────────────────────
+CREATE PROCEDURE sp_agregar_linea_venta(
+    IN p_factura_id    INT,
+    IN p_producto_id   INT,
+    IN p_bodega_id     INT,
+    IN p_cantidad      INT,
+    IN p_usuario_id    INT
+)
+BEGIN
+    DECLARE v_stock        INT DEFAULT 0;
+    DECLARE v_valor_venta  DECIMAL(15,2);
+    DECLARE v_iva          DECIMAL(5,2);
+
+    -- Validar stock disponible
+    SELECT COALESCE(cantidad, 0) INTO v_stock
+    FROM inventario
+    WHERE producto_id = p_producto_id AND bodega_id = p_bodega_id;
+
+    IF v_stock < p_cantidad THEN
+        INSERT INTO logs(usuario_id, tabla, operacion, registro_id, descripcion, nivel, dato_nuevo)
+        VALUES(p_usuario_id, 'detalle_factura_venta', 'ERROR', p_factura_id,
+               CONCAT('Stock insuficiente. Producto: ', p_producto_id,
+                      ' | Bodega: ', p_bodega_id,
+                      ' | Disponible: ', v_stock,
+                      ' | Solicitado: ', p_cantidad),
+               'ERROR',
+               JSON_OBJECT('producto_id', p_producto_id, 'bodega_id', p_bodega_id,
+                           'disponible', v_stock, 'solicitado', p_cantidad));
+
+        SIGNAL SQLSTATE '45000'
+            SET MESSAGE_TEXT = 'Stock insuficiente en la bodega para esta venta.';
+    END IF;
+
+    -- Obtener precio y IVA vigente del producto
+    SELECT valor_venta, iva INTO v_valor_venta, v_iva
+    FROM productos WHERE id = p_producto_id;
+
+    -- Insertar línea
+    INSERT INTO detalle_factura_venta(
+        factura_venta_id, producto_id, bodega_id,
+        cantidad, valor_unitario, iva
+    ) VALUES(
+        p_factura_id, p_producto_id, p_bodega_id,
+        p_cantidad, v_valor_venta, v_iva
+    );
+
+    -- Descontar stock
+    UPDATE inventario SET cantidad = cantidad - p_cantidad
+    WHERE producto_id = p_producto_id AND bodega_id = p_bodega_id;
+
+    -- Crear garantía empresa automáticamente (3 meses)
+    INSERT INTO garantias(detalle_venta_id, tipo, meses, fecha_inicio, fecha_fin)
+    VALUES(LAST_INSERT_ID(), 'empresa', 3, CURDATE(), DATE_ADD(CURDATE(), INTERVAL 3 MONTH));
+END$$
+
+-- ─────────────────────────────────────────────────────────
+-- Anular solo si no tiene devoluciones asociadas
+CREATE PROCEDURE sp_anular_factura_venta(
+    IN p_factura_id INT,
+    IN p_usuario_id INT
+)
+BEGIN
+    DECLARE v_tiene_dev INT DEFAULT 0;
+
+    SELECT COUNT(*) INTO v_tiene_dev
+    FROM devolucion_venta WHERE factura_venta_id = p_factura_id;
+
+    IF v_tiene_dev > 0 THEN
+        SIGNAL SQLSTATE '45000'
+            SET MESSAGE_TEXT = 'No se puede anular: la factura tiene devoluciones registradas.';
+    END IF;
+
+    UPDATE factura_venta SET estado = '0' WHERE id = p_factura_id;
+
+    INSERT INTO logs(usuario_id, tabla, operacion, registro_id, descripcion, nivel)
+    VALUES(p_usuario_id, 'factura_venta', 'UPDATE', p_factura_id,
+           CONCAT('Factura venta anulada ID: ', p_factura_id), 'WARNING');
+END$$
+
+
+-- ==========================================================
+-- MÓDULO: FACTURA DE COMPRA
+-- Necesita: Crear (cabecera + líneas), Anular
+-- ==========================================================
+
+CREATE PROCEDURE sp_crear_factura_compra(
+    IN  p_proveedor_id  INT,
+    IN  p_usuario_id    INT,
+    IN  p_tipo_pago_id  INT,
+    IN  p_num_factura   VARCHAR(50),
+    IN  p_observaciones TEXT,
+    OUT p_factura_id    INT
+)
+BEGIN
+    INSERT INTO factura_compra(
+        proveedor_id, usuario_id, fecha,
+        tipo_pago_id, num_factura, observaciones
+    ) VALUES(
+        p_proveedor_id, p_usuario_id, NOW(),
+        p_tipo_pago_id, p_num_factura, p_observaciones
+    );
+
+    SET p_factura_id = LAST_INSERT_ID();
+
+    INSERT INTO logs(usuario_id, tabla, operacion, registro_id, descripcion, nivel)
+    VALUES(p_usuario_id, 'factura_compra', 'INSERT', p_factura_id,
+           CONCAT('Factura compra creada: ', p_num_factura), 'INFO');
+END$$
+
+-- ─────────────────────────────────────────────────────────
+CREATE PROCEDURE sp_agregar_linea_compra(
+    IN p_factura_id    INT,
+    IN p_producto_id   INT,
+    IN p_bodega_id     INT,
+    IN p_cantidad      INT,
+    IN p_valor_unit    DECIMAL(15,2)
+)
+BEGIN
+    DECLARE v_iva DECIMAL(5,2);
+
+    SELECT iva INTO v_iva FROM productos WHERE id = p_producto_id;
+
+    INSERT INTO detalle_factura_compra(
+        factura_compra_id, producto_id, bodega_id,
+        cantidad, valor_unitario, iva
+    ) VALUES(
+        p_factura_id, p_producto_id, p_bodega_id,
+        p_cantidad, p_valor_unit, v_iva
+    );
+
+    -- Aumentar stock en inventario
+    INSERT INTO inventario(producto_id, bodega_id, cantidad)
+    VALUES(p_producto_id, p_bodega_id, p_cantidad)
+    ON DUPLICATE KEY UPDATE cantidad = cantidad + p_cantidad;
+END$$
+
+-- ─────────────────────────────────────────────────────────
+CREATE PROCEDURE sp_anular_factura_compra(
+    IN p_factura_id INT,
+    IN p_usuario_id INT
+)
+BEGIN
+    DECLARE v_tiene_dev INT DEFAULT 0;
+
+    SELECT COUNT(*) INTO v_tiene_dev
+    FROM devolucion_compra WHERE factura_compra_id = p_factura_id;
+
+    IF v_tiene_dev > 0 THEN
+        SIGNAL SQLSTATE '45000'
+            SET MESSAGE_TEXT = 'No se puede anular: la factura tiene devoluciones registradas.';
+    END IF;
+
+    UPDATE factura_compra SET estado = '0' WHERE id = p_factura_id;
+
+    INSERT INTO logs(usuario_id, tabla, operacion, registro_id, descripcion, nivel)
+    VALUES(p_usuario_id, 'factura_compra', 'UPDATE', p_factura_id,
+           CONCAT('Factura compra anulada ID: ', p_factura_id), 'WARNING');
+END$$
+
+
+-- ==========================================================
+-- MÓDULO: DEVOLUCIÓN DE VENTA
+-- Necesita: Crear (valida cantidad + restaura stock)
+-- NO actualizar ni eliminar: documento contable
+-- ==========================================================
+
+CREATE PROCEDURE sp_crear_devolucion_venta(
+    IN  p_factura_venta_id       INT,
+    IN  p_usuario_id             INT,
+    IN  p_observaciones          TEXT,
+    IN  p_detalle_venta_id       INT,
+    IN  p_cantidad               INT,
+    OUT p_devolucion_id          INT
+)
+BEGIN
+    DECLARE v_cantidad_original  INT;
+    DECLARE v_cantidad_devuelta  INT;
+    DECLARE v_producto_id        INT;
+    DECLARE v_bodega_id          INT;
+
+    -- Validar que la cantidad a devolver no supere la vendida
+    SELECT cantidad INTO v_cantidad_original
+    FROM detalle_factura_venta WHERE id = p_detalle_venta_id;
+
+    SELECT COALESCE(SUM(ddv.cantidad), 0) INTO v_cantidad_devuelta
+    FROM detalle_devolucion_venta ddv
+    WHERE ddv.detalle_factura_venta_id = p_detalle_venta_id;
+
+    IF (v_cantidad_devuelta + p_cantidad) > v_cantidad_original THEN
+        INSERT INTO logs(usuario_id, tabla, operacion, descripcion, nivel)
+        VALUES(p_usuario_id, 'devolucion_venta', 'ERROR',
+               CONCAT('Devolución excede cantidad vendida. Detalle ID: ', p_detalle_venta_id,
+                      ' | Vendido: ', v_cantidad_original,
+                      ' | Ya devuelto: ', v_cantidad_devuelta,
+                      ' | Intentado: ', p_cantidad), 'ERROR');
+
+        SIGNAL SQLSTATE '45000'
+            SET MESSAGE_TEXT = 'La cantidad a devolver supera la cantidad vendida en la factura.';
+    END IF;
+
+    -- Crear cabecera de devolución
+    INSERT INTO devolucion_venta(factura_venta_id, usuario_id, fecha, observaciones)
+    VALUES(p_factura_venta_id, p_usuario_id, NOW(), p_observaciones);
+
+    SET p_devolucion_id = LAST_INSERT_ID();
+
+    -- Insertar detalle
+    INSERT INTO detalle_devolucion_venta(
+        devolucion_venta_id, detalle_factura_venta_id, cantidad
+    ) VALUES(p_devolucion_id, p_detalle_venta_id, p_cantidad);
+
+    -- Restaurar stock en inventario
+    SELECT producto_id, bodega_id INTO v_producto_id, v_bodega_id
+    FROM detalle_factura_venta WHERE id = p_detalle_venta_id;
+
+    UPDATE inventario SET cantidad = cantidad + p_cantidad
+    WHERE producto_id = v_producto_id AND bodega_id = v_bodega_id;
+
+    INSERT INTO logs(usuario_id, tabla, operacion, registro_id, descripcion, nivel)
+    VALUES(p_usuario_id, 'devolucion_venta', 'INSERT', p_devolucion_id,
+           CONCAT('Devolución venta creada. Factura ID: ', p_factura_venta_id,
+                  ' | Cantidad devuelta: ', p_cantidad), 'INFO');
+END$$
+
+
