@@ -217,3 +217,33 @@ JOIN detalle_factura_compra   dfc ON dfc.id = ddc.detalle_factura_compra_id
 JOIN productos                p   ON p.id   = dfc.producto_id;
 
 
+-- ==========================================================
+-- MÓDULO: CLIENTES
+-- ==========================================================
+
+-- Historial de compras por cliente
+CREATE OR REPLACE VIEW v_historial_cliente AS
+SELECT
+    cl.id                                                       AS cliente_id,
+    cl.num_documento,
+    COALESCE(CONCAT(pe.nombre,' ',pe.apellido), em.nombre)      AS cliente,
+    COUNT(DISTINCT fv.id)                                       AS total_facturas,
+    SUM(dfv.cantidad)                                           AS total_unidades,
+    ROUND(
+        SUM(dfv.cantidad * dfv.valor_unitario * (1+dfv.iva/100))
+        * (1 - fv.descuento_porcentaje/100)
+    , 2)                                                        AS total_comprado,
+    MAX(fv.fecha)                                               AS ultima_compra,
+    CASE
+        WHEN SUM(dfv.cantidad * dfv.valor_unitario) > 200000000
+        THEN 'Aplica descuento 5%'
+        ELSE 'Sin descuento'
+    END                                                         AS estado_descuento
+FROM clientes cl
+JOIN factura_venta fv ON fv.cliente_id = cl.id AND fv.estado = '1'
+JOIN detalle_factura_venta dfv ON dfv.factura_venta_id = fv.id
+LEFT JOIN personas pe ON pe.cliente_id = cl.id
+LEFT JOIN empresas em ON em.cliente_id = cl.id
+GROUP BY cl.id, cl.num_documento, pe.nombre, pe.apellido, em.nombre, pe.cliente_id;
+
+
