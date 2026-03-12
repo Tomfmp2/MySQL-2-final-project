@@ -344,3 +344,136 @@ BEGIN
 END$$
 
 
+-- ==========================================================
+-- MÓDULO: FACTURA DE VENTA
+-- Necesita: Crear (cabecera + líneas en transacción), Anular
+-- NO actualizar líneas: las facturas son documentos contables
+-- ==========================================================
+
+CREATE PROCEDURE sp_crear_factura_venta(
+    IN  p_cliente_id          INT,
+    IN  p_asesor_id           INT,
+    IN  p_usuario_id          INT,
+    IN  p_tipo_pago_id        INT,
+    IN  p_num_factura         VARCHAR(50),
+    IN  p_observaciones       TEXT,
+    OUT p_factura_id          INT
+)
+BEGIN
+    DECLARE v_descuento      DECIMAL(5,2) DEFAULT 0.00;
+    DECLARE v_total_acum     DECIMAL(15,2) DEFAULT 0.00;
+    DECLARE v_smlv           DECIMAL(15,2) DEFAULT 1423500.00;
+
+    -- Calcular descuento automático si cliente supera 200 millones acumulados
+    SELECT COALESCE(SUM(dfv.cantidad * dfv.valor_unitario * (1 + dfv.iva/100)), 0)
+    INTO v_total_acum
+    FROM factura_venta fv
+    JOIN detalle_factura_venta dfv ON dfv.factura_venta_id = fv.id
+    WHERE fv.cliente_id = p_cliente_id AND fv.estado = '1';
+
+    IF v_total_acum > 200000000 THEN
+        SET v_descuento = 5.00;
+    END IF;
+
+    -- Verificar si tiene descuento específico activo (sobreescribe el automático)
+    SELECT COALESCE(MAX(porcentaje), v_descuento)
+    INTO v_descuento
+    FROM descuentos_cliente
+    WHERE cliente_id = p_cliente_id AND activo = 1;
+
+    INSERT INTO factura_venta(
+        cliente_id, asesor_id, usuario_id, fecha,
+        tipo_pago_id, num_factura, descuento_porcentaje, observaciones
+    ) VALUES(
+        p_cliente_id, p_asesor_id, p_usuario_id, NOW(),
+        p_tipo_pago_id, p_num_factura, v_descuento, p_observaciones
+    );
+
+    SET p_factura_id = LAST_INSERT_ID();
+
+    INSERT INTO logs(usuario_id, tabla, operacion, registro_id, descripcion, nivel)
+    VALUES(p_usuario_id, 'factura_venta', 'INSERT', p_factura_id,
+           CONCAT('Factura venta creada: ', p_num_factura,
+                  ' | Descuento aplicado: ', v_descuento, '%'), 'INFO');
+END$$
+
+-- ─────────────────────────────────────────────────────────
+CREATE PROCEDURE sp_agregar_linea_venta(
+    IN p_factura_id    INT,
+    IN p_producto_id   INT,
+    IN p_bodega_id     INT,
+    IN p_cantidad      INT,
+    IN p_usuario_id    INT
+)
+BEGIN
+    DECLARE v_stock        INT DEFAULT 0;
+    DECLARE v_valor_venta  DECIMAL(15,2);
+    DECLARE v_iva          DECIMAL(5,2);
+
+    -- Validar stock disponible
+    SELECT COALESCE(cantidad, 0) INTO v_stock
+    FROM inventario
+    WHERE producto_id = p_producto_id AND bodega_id = p_bodega_id;
+
+    IF v_stock < p_cantidad THEN
+        INSERT INTO logs(usuario_id, tabla, operacion, registro_id, descripcion, nivel, dato_nuevo)
+        VALUES(p_usuario_id, 'detalle_factura_venta', 'ERROR', p_factura_id,
+               CONCAT('Stock insuficiente. Producto: ', p_producto_id,
+                      ' | Bodega: ', p_bodega_id,
+                      ' | Disponible: ', v_stock,
+                      ' | Solicitado: ', p_cantidad),
+               'ERROR',
+               JSON_OBJECT('producto_id', p_producto_id, 'bodega_id', p_bodega_id,
+                           'disponible', v_stock, 'solicitado', p_cantidad));
+
+        SIGNAL SQLSTATE '45000'
+            SET MESSAGE_TEXT = 'Stock insuficiente en la bodega para esta venta.';
+    END IF;
+
+    -- Obtener precio y IVA vigente del producto
+    SELECT valor_venta, iva INTO v_valor_venta, v_iva
+    FROM productos WHERE id = p_producto_id;
+
+    -- Insertar línea
+    INSERT INTO detalle_factura_venta(
+        factura_venta_id, producto_id, bodega_id,
+        cantidad, valor_unitario, iva
+    ) VALUES(
+        p_factura_id, p_producto_id, p_bodega_id,
+        p_cantidad, v_valor_venta, v_iva
+    );
+
+    -- Descontar stock
+    UPDATE inventario SET cantidad = cantidad - p_cantidad
+    WHERE producto_id = p_producto_id AND bodega_id = p_bodega_id;
+
+    -- Crear garantía empresa automáticamente (3 meses)
+    INSERT INTO garantias(detalle_venta_id, tipo, meses, fecha_inicio, fecha_fin)
+    VALUES(LAST_INSERT_ID(), 'empresa', 3, CURDATE(), DATE_ADD(CURDATE(), INTERVAL 3 MONTH));
+END$$
+
+-- ─────────────────────────────────────────────────────────
+-- Anular solo si no tiene devoluciones asociadas
+CREATE PROCEDURE sp_anular_factura_venta(
+    IN p_factura_id INT,
+    IN p_usuario_id INT
+)
+BEGIN
+    DECLARE v_tiene_dev INT DEFAULT 0;
+
+    SELECT COUNT(*) INTO v_tiene_dev
+    FROM devolucion_venta WHERE factura_venta_id = p_factura_id;
+
+    IF v_tiene_dev > 0 THEN
+        SIGNAL SQLSTATE '45000'
+            SET MESSAGE_TEXT = 'No se puede anular: la factura tiene devoluciones registradas.';
+    END IF;
+
+    UPDATE factura_venta SET estado = '0' WHERE id = p_factura_id;
+
+    INSERT INTO logs(usuario_id, tabla, operacion, registro_id, descripcion, nivel)
+    VALUES(p_usuario_id, 'factura_venta', 'UPDATE', p_factura_id,
+           CONCAT('Factura venta anulada ID: ', p_factura_id), 'WARNING');
+END$$
+
+
