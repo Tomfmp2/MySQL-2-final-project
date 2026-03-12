@@ -104,6 +104,142 @@ END$$
 
 
 -- ==========================================================
+-- MÓDULO: DESCUENTOS
+-- ==========================================================
+
+-- Porcentaje de descuento vigente para un cliente
+DROP FUNCTION IF EXISTS fn_descuento_cliente$$
+CREATE FUNCTION fn_descuento_cliente(p_cliente_id INT)
+RETURNS DECIMAL(5,2)
+DETERMINISTIC
+READS SQL DATA
+BEGIN
+    DECLARE v_descuento     DECIMAL(5,2) DEFAULT 0.00;
+    DECLARE v_total_acum    DECIMAL(15,2) DEFAULT 0;
+
+    -- Primero verifica si tiene descuento activo registrado
+    SELECT COALESCE(MAX(porcentaje), 0) INTO v_descuento
+    FROM descuentos_cliente
+    WHERE cliente_id = p_cliente_id AND activo = 1;
+
+    -- Si no tiene, evalúa por acumulado histórico
+    IF v_descuento = 0 THEN
+        SELECT COALESCE(SUM(d.cantidad * d.valor_unitario * (1 + d.iva/100)), 0)
+        INTO v_total_acum
+        FROM factura_venta fv
+        JOIN detalle_factura_venta d ON d.factura_venta_id = fv.id
+        WHERE fv.cliente_id = p_cliente_id AND fv.estado = '1';
+
+        SET v_descuento = CASE
+            WHEN v_total_acum >= 500000000 THEN 10.00
+            WHEN v_total_acum >= 200000000 THEN  5.00
+            ELSE 0.00
+        END;
+    END IF;
+
+    RETURN v_descuento;
+END$$
+
+-- ─────────────────────────────────────────────────────────
+-- Aplica el descuento a un monto dado y retorna el valor a pagar
+DROP FUNCTION IF EXISTS fn_aplicar_descuento$$
+CREATE FUNCTION fn_aplicar_descuento(
+    p_monto      DECIMAL(15,2),
+    p_cliente_id INT
+)
+RETURNS DECIMAL(15,2)
+DETERMINISTIC
+READS SQL DATA
+BEGIN
+    DECLARE v_pct DECIMAL(5,2) DEFAULT 0;
+
+    SET v_pct = fn_descuento_cliente(p_cliente_id);
+
+    RETURN ROUND(p_monto * (1 - v_pct / 100), 2);
+END$$
+
+
+-- ==========================================================
+-- MÓDULO: INVENTARIO
+-- ==========================================================
+
+-- Stock disponible de un producto en una bodega específica
+DROP FUNCTION IF EXISTS fn_stock_disponible$$
+CREATE FUNCTION fn_stock_disponible(
+    p_producto_id INT,
+    p_bodega_id   INT
+)
+RETURNS INT
+DETERMINISTIC
+READS SQL DATA
+BEGIN
+    DECLARE v_stock INT DEFAULT 0;
+
+    SELECT COALESCE(cantidad, 0) INTO v_stock
+    FROM inventario
+    WHERE producto_id = p_producto_id AND bodega_id = p_bodega_id;
+
+    RETURN v_stock;
+END$$
+
+-- ─────────────────────────────────────────────────────────
+-- Stock total de un producto en todas las bodegas
+DROP FUNCTION IF EXISTS fn_stock_total_producto$$
+CREATE FUNCTION fn_stock_total_producto(p_producto_id INT)
+RETURNS INT
+DETERMINISTIC
+READS SQL DATA
+BEGIN
+    DECLARE v_total INT DEFAULT 0;
+
+    SELECT COALESCE(SUM(cantidad), 0) INTO v_total
+    FROM inventario
+    WHERE producto_id = p_producto_id;
+
+    RETURN v_total;
+END$$
+
+-- ─────────────────────────────────────────────────────────
+-- Valor total del inventario de un producto a precio de costo
+DROP FUNCTION IF EXISTS fn_valor_inventario_costo$$
+CREATE FUNCTION fn_valor_inventario_costo(p_producto_id INT)
+RETURNS DECIMAL(15,2)
+DETERMINISTIC
+READS SQL DATA
+BEGIN
+    DECLARE v_valor_compra DECIMAL(15,2) DEFAULT 0;
+    DECLARE v_stock_total  INT DEFAULT 0;
+
+    SELECT valor_compra INTO v_valor_compra
+    FROM productos WHERE id = p_producto_id;
+
+    SET v_stock_total = fn_stock_total_producto(p_producto_id);
+
+    RETURN ROUND(v_stock_total * v_valor_compra, 2);
+END$$
+
+-- ─────────────────────────────────────────────────────────
+-- Capacidad disponible restante en una bodega
+DROP FUNCTION IF EXISTS fn_capacidad_disponible_bodega$$
+CREATE FUNCTION fn_capacidad_disponible_bodega(p_bodega_id INT)
+RETURNS INT
+DETERMINISTIC
+READS SQL DATA
+BEGIN
+    DECLARE v_capacidad_max INT DEFAULT 0;
+    DECLARE v_ocupado       INT DEFAULT 0;
+
+    SELECT cantidad_maxima INTO v_capacidad_max
+    FROM bodegas WHERE id = p_bodega_id;
+
+    SELECT COALESCE(SUM(cantidad), 0) INTO v_ocupado
+    FROM inventario WHERE bodega_id = p_bodega_id;
+
+    RETURN (v_capacidad_max - v_ocupado);
+END$$
+
+
+-- ==========================================================
 -- MÓDULO: ASESORES - COMISIONES
 -- ==========================================================
 
