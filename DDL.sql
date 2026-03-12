@@ -88,3 +88,46 @@ CREATE TABLE `usuario_permiso` (
   `permiso_id` int NOT NULL,
   PRIMARY KEY (`usuario_id`, `permiso_id`)
 );
+
+-- ==========================================================
+-- 3. MÓDULO DE INVENTARIO
+-- ==========================================================
+
+CREATE TABLE `categoria` (
+  `id` int PRIMARY KEY AUTO_INCREMENT,
+  `tipo` varchar(30) NOT NULL
+);
+
+CREATE TABLE `productos` (
+  `id` int PRIMARY KEY AUTO_INCREMENT,
+  `codigo` varchar(30) UNIQUE NOT NULL,
+  `nombre` varchar(50) NOT NULL,
+  `descripcion` text NOT NULL,
+  `categoria_id` int NOT NULL,
+  `porcentaje_utilidad` decimal(5,2) NOT NULL,
+  `valor_compra` decimal(15,2) NOT NULL,
+  `valor_venta` decimal(15,2) NOT NULL,
+  `iva` decimal(5,2) NOT NULL,
+  `imagen_url` varchar(255),
+  `estado` ENUM('0','1') NOT NULL DEFAULT '1',
+  INDEX `idx_producto_query` (`nombre`, `codigo`)
+);
+
+CREATE TABLE `bodegas` (
+  `id` int PRIMARY KEY AUTO_INCREMENT,
+  `codigo` varchar(30) UNIQUE NOT NULL,
+  `nombre` varchar(50) NOT NULL,
+  `descripcion` text,
+  `ciudad_id` int NOT NULL,
+  `direccion` varchar(200) NOT NULL,
+  `cantidad_maxima` int NOT NULL,
+  `estado` ENUM('0','1') NOT NULL DEFAULT '1'
+);
+
+CREATE TABLE `inventario` (
+  `producto_id` int NOT NULL,
+  `bodega_id` int NOT NULL,
+  `cantidad` int NOT NULL DEFAULT 0,
+  PRIMARY KEY (`producto_id`, `bodega_id`),
+  INDEX `idx_inventario_stock` (`cantidad`)
+);
