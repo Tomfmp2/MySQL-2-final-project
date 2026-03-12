@@ -247,3 +247,87 @@ LEFT JOIN empresas em ON em.cliente_id = cl.id
 GROUP BY cl.id, cl.num_documento, pe.nombre, pe.apellido, em.nombre, pe.cliente_id;
 
 
+-- ==========================================================
+-- MÓDULO: SEGURIDAD
+-- ==========================================================
+
+-- Permisos efectivos por usuario (rol principal + permisos directos)
+CREATE OR REPLACE VIEW v_permisos_usuario AS
+SELECT
+    u.id                                    AS usuario_id,
+    CONCAT(u.nombres,' ',u.apellidos)       AS usuario,
+    u.email_corporativo,
+    r.nombre                                AS rol,
+    m.nombre                                AS modulo,
+    p.nombre                                AS permiso,
+    p.lectura,
+    p.escritura,
+    p.actualizacion,
+    p.eliminacion,
+    'ROL'                                   AS origen
+FROM usuarios u
+JOIN usuario_rol  ur ON ur.usuario_id = u.id
+JOIN roles         r ON r.id          = ur.rol_id
+JOIN rol_permiso  rp ON rp.rol_id     = r.id
+JOIN permisos      p ON p.id          = rp.permiso_id
+JOIN modulos       m ON m.id          = p.modulo_id
+WHERE u.estado = '1'
+
+UNION ALL
+
+SELECT
+    u.id,
+    CONCAT(u.nombres,' ',u.apellidos),
+    u.email_corporativo,
+    'Permiso directo'                       AS rol,
+    m.nombre,
+    p.nombre,
+    p.lectura,
+    p.escritura,
+    p.actualizacion,
+    p.eliminacion,
+    'DIRECTO'
+FROM usuarios u
+JOIN usuario_permiso up ON up.usuario_id = u.id
+JOIN permisos         p ON p.id          = up.permiso_id
+JOIN modulos          m ON m.id          = p.modulo_id
+WHERE u.estado = '1';
+
+
+-- ==========================================================
+-- MÓDULO: LOGS
+-- ==========================================================
+
+-- Solo errores para auditoría
+CREATE OR REPLACE VIEW v_logs_errores AS
+SELECT
+    l.id,
+    l.fecha,
+    COALESCE(CONCAT(u.nombres,' ',u.apellidos), 'Sistema/Trigger') AS usuario,
+    l.tabla,
+    l.operacion,
+    l.registro_id,
+    l.descripcion                                                   AS mensaje_error,
+    l.dato_anterior,
+    l.dato_nuevo,
+    l.ip
+FROM logs l
+LEFT JOIN usuarios u ON u.id = l.usuario_id
+WHERE l.nivel = 'ERROR'
+ORDER BY l.fecha DESC;
+
+-- ─────────────────────────────────────────────────────────
+-- Actividad reciente del sistema (últimas 24 horas)
+CREATE OR REPLACE VIEW v_actividad_reciente AS
+SELECT
+    l.id,
+    l.fecha,
+    COALESCE(CONCAT(u.nombres,' ',u.apellidos), 'Sistema') AS usuario,
+    l.tabla,
+    l.operacion,
+    l.nivel,
+    l.descripcion
+FROM logs l
+LEFT JOIN usuarios u ON u.id = l.usuario_id
+WHERE l.fecha >= DATE_SUB(NOW(), INTERVAL 24 HOUR)
+ORDER BY l.fecha DESC;
