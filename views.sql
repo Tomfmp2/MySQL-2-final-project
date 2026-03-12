@@ -62,3 +62,109 @@ GROUP BY p.id, p.codigo, p.nombre, c.tipo,
          p.valor_compra, p.valor_venta, p.iva, p.estado;
 
 
+-- ==========================================================
+-- MÓDULO: VENTAS
+-- ==========================================================
+
+-- Detalle completo de facturas de venta
+CREATE OR REPLACE VIEW v_facturas_venta AS
+SELECT
+    fv.id                                                       AS factura_id,
+    fv.num_factura,
+    fv.fecha,
+    COALESCE(CONCAT(pe.nombre,' ',pe.apellido), em.nombre)      AS cliente,
+    CASE WHEN pe.cliente_id IS NOT NULL THEN 'Persona'
+         ELSE 'Empresa' END                                     AS tipo_cliente,
+    CONCAT(cl.nombre_email,'@',te.tipo)                         AS email_cliente,
+    ac.razon_social                                             AS asesor,
+    CONCAT(u.nombres,' ',u.apellidos)                           AS usuario_cajero,
+    tp.nombre                                                   AS tipo_pago,
+    fv.descuento_porcentaje,
+    SUM(dfv.cantidad * dfv.valor_unitario)                      AS subtotal,
+    SUM(dfv.cantidad * dfv.valor_unitario * (dfv.iva/100))      AS total_iva,
+    ROUND(
+        SUM(dfv.cantidad * dfv.valor_unitario * (1 + dfv.iva/100))
+        * (1 - fv.descuento_porcentaje/100)
+    , 2)                                                        AS total_final,
+    fv.estado,
+    fv.observaciones
+FROM factura_venta fv
+JOIN clientes    cl  ON cl.id  = fv.cliente_id
+JOIN tipo_email  te  ON te.id  = cl.tipo_email_id
+JOIN tipo_pago   tp  ON tp.id  = fv.tipo_pago_id
+JOIN usuarios    u   ON u.id   = fv.usuario_id
+JOIN detalle_factura_venta dfv ON dfv.factura_venta_id = fv.id
+LEFT JOIN personas  pe  ON pe.cliente_id  = cl.id
+LEFT JOIN empresas  em  ON em.cliente_id  = cl.id
+LEFT JOIN asesores_comerciales ac ON ac.id = fv.asesor_id
+GROUP BY fv.id, fv.num_factura, fv.fecha, cl.nombre_email, te.tipo,
+         pe.nombre, pe.apellido, em.nombre, pe.cliente_id,
+         ac.razon_social, u.nombres, u.apellidos,
+         tp.nombre, fv.descuento_porcentaje, fv.estado, fv.observaciones;
+
+-- ─────────────────────────────────────────────────────────
+-- Líneas de detalle de cada factura de venta
+CREATE OR REPLACE VIEW v_detalle_facturas_venta AS
+SELECT
+    fv.num_factura,
+    fv.fecha,
+    p.codigo                                                    AS cod_producto,
+    p.nombre                                                    AS producto,
+    b.nombre                                                    AS bodega,
+    dfv.cantidad,
+    dfv.valor_unitario,
+    dfv.iva,
+    ROUND(dfv.cantidad * dfv.valor_unitario, 2)                 AS subtotal_linea,
+    ROUND(dfv.cantidad * dfv.valor_unitario * (dfv.iva/100), 2) AS iva_linea,
+    ROUND(dfv.cantidad * dfv.valor_unitario * (1+dfv.iva/100), 2) AS total_linea,
+    fv.descuento_porcentaje
+FROM detalle_factura_venta dfv
+JOIN factura_venta fv ON fv.id = dfv.factura_venta_id
+JOIN productos     p  ON p.id  = dfv.producto_id
+JOIN bodegas       b  ON b.id  = dfv.bodega_id;
+
+-- ─────────────────────────────────────────────────────────
+-- Ventas por asesor en el mes actual
+CREATE OR REPLACE VIEW v_ventas_por_asesor AS
+SELECT
+    ac.id                                                       AS asesor_id,
+    ac.razon_social                                             AS asesor,
+    COUNT(DISTINCT fv.id)                                       AS num_facturas,
+    SUM(dfv.cantidad)                                           AS unidades_vendidas,
+    ROUND(
+        SUM(dfv.cantidad * dfv.valor_unitario * (1+dfv.iva/100))
+        * (1 - fv.descuento_porcentaje/100)
+    , 2)                                                        AS total_ventas,
+    YEAR(fv.fecha)                                              AS anio,
+    MONTH(fv.fecha)                                             AS mes
+FROM factura_venta fv
+JOIN detalle_factura_venta dfv ON dfv.factura_venta_id = fv.id
+JOIN asesores_comerciales  ac  ON ac.id = fv.asesor_id
+WHERE fv.estado = '1'
+GROUP BY ac.id, ac.razon_social, YEAR(fv.fecha), MONTH(fv.fecha);
+
+-- ─────────────────────────────────────────────────────────
+-- Devoluciones de venta con detalle
+CREATE OR REPLACE VIEW v_devoluciones_venta AS
+SELECT
+    dv.id                                                       AS devolucion_id,
+    dv.fecha,
+    fv.num_factura,
+    COALESCE(CONCAT(pe.nombre,' ',pe.apellido), em.nombre)      AS cliente,
+    CONCAT(u.nombres,' ',u.apellidos)                           AS usuario,
+    p.nombre                                                    AS producto,
+    ddv.cantidad                                                AS cantidad_devuelta,
+    dfv.valor_unitario,
+    ROUND(ddv.cantidad * dfv.valor_unitario * (1+dfv.iva/100), 2) AS valor_devuelto,
+    dv.observaciones
+FROM devolucion_venta dv
+JOIN factura_venta           fv  ON fv.id  = dv.factura_venta_id
+JOIN usuarios                u   ON u.id   = dv.usuario_id
+JOIN detalle_devolucion_venta ddv ON ddv.devolucion_venta_id = dv.id
+JOIN detalle_factura_venta   dfv ON dfv.id = ddv.detalle_factura_venta_id
+JOIN productos               p   ON p.id   = dfv.producto_id
+JOIN clientes                cl  ON cl.id  = fv.cliente_id
+LEFT JOIN personas  pe ON pe.cliente_id = cl.id
+LEFT JOIN empresas  em ON em.cliente_id = cl.id;
+
+
