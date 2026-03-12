@@ -477,3 +477,148 @@ BEGIN
 END$$
 
 
+-- ==========================================================
+-- MÓDULO: FACTURA DE COMPRA
+-- Necesita: Crear (cabecera + líneas), Anular
+-- ==========================================================
+
+CREATE PROCEDURE sp_crear_factura_compra(
+    IN  p_proveedor_id  INT,
+    IN  p_usuario_id    INT,
+    IN  p_tipo_pago_id  INT,
+    IN  p_num_factura   VARCHAR(50),
+    IN  p_observaciones TEXT,
+    OUT p_factura_id    INT
+)
+BEGIN
+    INSERT INTO factura_compra(
+        proveedor_id, usuario_id, fecha,
+        tipo_pago_id, num_factura, observaciones
+    ) VALUES(
+        p_proveedor_id, p_usuario_id, NOW(),
+        p_tipo_pago_id, p_num_factura, p_observaciones
+    );
+
+    SET p_factura_id = LAST_INSERT_ID();
+
+    INSERT INTO logs(usuario_id, tabla, operacion, registro_id, descripcion, nivel)
+    VALUES(p_usuario_id, 'factura_compra', 'INSERT', p_factura_id,
+           CONCAT('Factura compra creada: ', p_num_factura), 'INFO');
+END$$
+
+-- ─────────────────────────────────────────────────────────
+CREATE PROCEDURE sp_agregar_linea_compra(
+    IN p_factura_id    INT,
+    IN p_producto_id   INT,
+    IN p_bodega_id     INT,
+    IN p_cantidad      INT,
+    IN p_valor_unit    DECIMAL(15,2)
+)
+BEGIN
+    DECLARE v_iva DECIMAL(5,2);
+
+    SELECT iva INTO v_iva FROM productos WHERE id = p_producto_id;
+
+    INSERT INTO detalle_factura_compra(
+        factura_compra_id, producto_id, bodega_id,
+        cantidad, valor_unitario, iva
+    ) VALUES(
+        p_factura_id, p_producto_id, p_bodega_id,
+        p_cantidad, p_valor_unit, v_iva
+    );
+
+    -- Aumentar stock en inventario
+    INSERT INTO inventario(producto_id, bodega_id, cantidad)
+    VALUES(p_producto_id, p_bodega_id, p_cantidad)
+    ON DUPLICATE KEY UPDATE cantidad = cantidad + p_cantidad;
+END$$
+
+-- ─────────────────────────────────────────────────────────
+CREATE PROCEDURE sp_anular_factura_compra(
+    IN p_factura_id INT,
+    IN p_usuario_id INT
+)
+BEGIN
+    DECLARE v_tiene_dev INT DEFAULT 0;
+
+    SELECT COUNT(*) INTO v_tiene_dev
+    FROM devolucion_compra WHERE factura_compra_id = p_factura_id;
+
+    IF v_tiene_dev > 0 THEN
+        SIGNAL SQLSTATE '45000'
+            SET MESSAGE_TEXT = 'No se puede anular: la factura tiene devoluciones registradas.';
+    END IF;
+
+    UPDATE factura_compra SET estado = '0' WHERE id = p_factura_id;
+
+    INSERT INTO logs(usuario_id, tabla, operacion, registro_id, descripcion, nivel)
+    VALUES(p_usuario_id, 'factura_compra', 'UPDATE', p_factura_id,
+           CONCAT('Factura compra anulada ID: ', p_factura_id), 'WARNING');
+END$$
+
+
+-- ==========================================================
+-- MÓDULO: DEVOLUCIÓN DE VENTA
+-- Necesita: Crear (valida cantidad + restaura stock)
+-- NO actualizar ni eliminar: documento contable
+-- ==========================================================
+
+CREATE PROCEDURE sp_crear_devolucion_venta(
+    IN  p_factura_venta_id       INT,
+    IN  p_usuario_id             INT,
+    IN  p_observaciones          TEXT,
+    IN  p_detalle_venta_id       INT,
+    IN  p_cantidad               INT,
+    OUT p_devolucion_id          INT
+)
+BEGIN
+    DECLARE v_cantidad_original  INT;
+    DECLARE v_cantidad_devuelta  INT;
+    DECLARE v_producto_id        INT;
+    DECLARE v_bodega_id          INT;
+
+    -- Validar que la cantidad a devolver no supere la vendida
+    SELECT cantidad INTO v_cantidad_original
+    FROM detalle_factura_venta WHERE id = p_detalle_venta_id;
+
+    SELECT COALESCE(SUM(ddv.cantidad), 0) INTO v_cantidad_devuelta
+    FROM detalle_devolucion_venta ddv
+    WHERE ddv.detalle_factura_venta_id = p_detalle_venta_id;
+
+    IF (v_cantidad_devuelta + p_cantidad) > v_cantidad_original THEN
+        INSERT INTO logs(usuario_id, tabla, operacion, descripcion, nivel)
+        VALUES(p_usuario_id, 'devolucion_venta', 'ERROR',
+               CONCAT('Devolución excede cantidad vendida. Detalle ID: ', p_detalle_venta_id,
+                      ' | Vendido: ', v_cantidad_original,
+                      ' | Ya devuelto: ', v_cantidad_devuelta,
+                      ' | Intentado: ', p_cantidad), 'ERROR');
+
+        SIGNAL SQLSTATE '45000'
+            SET MESSAGE_TEXT = 'La cantidad a devolver supera la cantidad vendida en la factura.';
+    END IF;
+
+    -- Crear cabecera de devolución
+    INSERT INTO devolucion_venta(factura_venta_id, usuario_id, fecha, observaciones)
+    VALUES(p_factura_venta_id, p_usuario_id, NOW(), p_observaciones);
+
+    SET p_devolucion_id = LAST_INSERT_ID();
+
+    -- Insertar detalle
+    INSERT INTO detalle_devolucion_venta(
+        devolucion_venta_id, detalle_factura_venta_id, cantidad
+    ) VALUES(p_devolucion_id, p_detalle_venta_id, p_cantidad);
+
+    -- Restaurar stock en inventario
+    SELECT producto_id, bodega_id INTO v_producto_id, v_bodega_id
+    FROM detalle_factura_venta WHERE id = p_detalle_venta_id;
+
+    UPDATE inventario SET cantidad = cantidad + p_cantidad
+    WHERE producto_id = v_producto_id AND bodega_id = v_bodega_id;
+
+    INSERT INTO logs(usuario_id, tabla, operacion, registro_id, descripcion, nivel)
+    VALUES(p_usuario_id, 'devolucion_venta', 'INSERT', p_devolucion_id,
+           CONCAT('Devolución venta creada. Factura ID: ', p_factura_venta_id,
+                  ' | Cantidad devuelta: ', p_cantidad), 'INFO');
+END$$
+
+
