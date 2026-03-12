@@ -622,3 +622,131 @@ BEGIN
 END$$
 
 
+-- ==========================================================
+-- MÓDULO: DEVOLUCIÓN DE COMPRA
+-- Necesita: Crear (valida cantidad + reduce stock)
+-- NO actualizar ni eliminar: documento contable
+-- ==========================================================
+
+CREATE PROCEDURE sp_crear_devolucion_compra(
+    IN  p_factura_compra_id      INT,
+    IN  p_usuario_id             INT,
+    IN  p_observaciones          TEXT,
+    IN  p_detalle_compra_id      INT,
+    IN  p_cantidad               INT,
+    OUT p_devolucion_id          INT
+)
+BEGIN
+    DECLARE v_cantidad_original  INT;
+    DECLARE v_cantidad_devuelta  INT;
+    DECLARE v_producto_id        INT;
+    DECLARE v_bodega_id          INT;
+    DECLARE v_stock_actual       INT;
+
+    -- Validar que la cantidad no supere la comprada
+    SELECT cantidad INTO v_cantidad_original
+    FROM detalle_factura_compra WHERE id = p_detalle_compra_id;
+
+    SELECT COALESCE(SUM(ddc.cantidad), 0) INTO v_cantidad_devuelta
+    FROM detalle_devolucion_compra ddc
+    WHERE ddc.detalle_factura_compra_id = p_detalle_compra_id;
+
+    IF (v_cantidad_devuelta + p_cantidad) > v_cantidad_original THEN
+        INSERT INTO logs(usuario_id, tabla, operacion, descripcion, nivel)
+        VALUES(p_usuario_id, 'devolucion_compra', 'ERROR',
+               CONCAT('Devolución excede cantidad comprada. Detalle ID: ', p_detalle_compra_id,
+                      ' | Comprado: ', v_cantidad_original,
+                      ' | Ya devuelto: ', v_cantidad_devuelta,
+                      ' | Intentado: ', p_cantidad), 'ERROR');
+
+        SIGNAL SQLSTATE '45000'
+            SET MESSAGE_TEXT = 'La cantidad a devolver supera la cantidad comprada en la factura.';
+    END IF;
+
+    -- Validar que haya suficiente stock para descontar
+    SELECT producto_id, bodega_id INTO v_producto_id, v_bodega_id
+    FROM detalle_factura_compra WHERE id = p_detalle_compra_id;
+
+    SELECT COALESCE(cantidad, 0) INTO v_stock_actual
+    FROM inventario WHERE producto_id = v_producto_id AND bodega_id = v_bodega_id;
+
+    IF v_stock_actual < p_cantidad THEN
+        SIGNAL SQLSTATE '45000'
+            SET MESSAGE_TEXT = 'Stock insuficiente para procesar la devolución al proveedor.';
+    END IF;
+
+    -- Crear cabecera
+    INSERT INTO devolucion_compra(factura_compra_id, usuario_id, fecha, observaciones)
+    VALUES(p_factura_compra_id, p_usuario_id, NOW(), p_observaciones);
+
+    SET p_devolucion_id = LAST_INSERT_ID();
+
+    -- Insertar detalle
+    INSERT INTO detalle_devolucion_compra(
+        devolucion_compra_id, detalle_factura_compra_id, cantidad
+    ) VALUES(p_devolucion_id, p_detalle_compra_id, p_cantidad);
+
+    -- Reducir stock
+    UPDATE inventario SET cantidad = cantidad - p_cantidad
+    WHERE producto_id = v_producto_id AND bodega_id = v_bodega_id;
+
+    INSERT INTO logs(usuario_id, tabla, operacion, registro_id, descripcion, nivel)
+    VALUES(p_usuario_id, 'devolucion_compra', 'INSERT', p_devolucion_id,
+           CONCAT('Devolución compra creada. Factura ID: ', p_factura_compra_id,
+                  ' | Cantidad devuelta: ', p_cantidad), 'INFO');
+END$$
+
+
+-- ==========================================================
+-- MÓDULO: INVENTARIO
+-- Solo operación especial: traslado entre bodegas
+-- Los movimientos normales los hacen los SP de compra/venta
+-- ==========================================================
+
+CREATE PROCEDURE sp_traslado_inventario(
+    IN p_producto_id   INT,
+    IN p_bodega_origen INT,
+    IN p_bodega_destino INT,
+    IN p_cantidad      INT,
+    IN p_usuario_id    INT
+)
+BEGIN
+    DECLARE v_stock INT DEFAULT 0;
+
+    SELECT COALESCE(cantidad, 0) INTO v_stock
+    FROM inventario
+    WHERE producto_id = p_producto_id AND bodega_id = p_bodega_origen;
+
+    IF v_stock < p_cantidad THEN
+        INSERT INTO logs(usuario_id, tabla, operacion, descripcion, nivel)
+        VALUES(p_usuario_id, 'inventario', 'ERROR',
+               CONCAT('Traslado fallido. Producto: ', p_producto_id,
+                      ' | Bodega origen: ', p_bodega_origen,
+                      ' | Stock: ', v_stock,
+                      ' | Solicitado: ', p_cantidad), 'ERROR');
+
+        SIGNAL SQLSTATE '45000'
+            SET MESSAGE_TEXT = 'Stock insuficiente en bodega origen para el traslado.';
+    END IF;
+
+    -- Reducir en origen
+    UPDATE inventario SET cantidad = cantidad - p_cantidad
+    WHERE producto_id = p_producto_id AND bodega_id = p_bodega_origen;
+
+    -- Aumentar en destino (crea registro si no existe)
+    INSERT INTO inventario(producto_id, bodega_id, cantidad)
+    VALUES(p_producto_id, p_bodega_destino, p_cantidad)
+    ON DUPLICATE KEY UPDATE cantidad = cantidad + p_cantidad;
+
+    INSERT INTO logs(usuario_id, tabla, operacion, descripcion, nivel,
+                     dato_anterior, dato_nuevo)
+    VALUES(p_usuario_id, 'inventario', 'UPDATE',
+           CONCAT('Traslado de ', p_cantidad, ' unidades. Producto: ', p_producto_id,
+                  ' | Origen bodega: ', p_bodega_origen,
+                  ' | Destino bodega: ', p_bodega_destino),
+           'INFO',
+           JSON_OBJECT('bodega_id', p_bodega_origen, 'cantidad_reducida', p_cantidad),
+           JSON_OBJECT('bodega_id', p_bodega_destino, 'cantidad_agregada', p_cantidad));
+END$$
+
+DELIMITER ;
