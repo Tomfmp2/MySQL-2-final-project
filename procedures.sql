@@ -262,3 +262,85 @@ BEGIN
 END$$
 
 
+-- ==========================================================
+-- MÓDULO: USUARIOS
+-- Necesita: Crear, Actualizar, Desactivar, Leer
+-- NO eliminar: auditoría requiere conservar usuarios
+-- ==========================================================
+
+CREATE PROCEDURE sp_crear_usuario(
+    IN p_rol_principal_id  INT,
+    IN p_tipo_doc_id       INT,
+    IN p_num_doc           VARCHAR(20),
+    IN p_nombres           VARCHAR(100),
+    IN p_apellidos         VARCHAR(100),
+    IN p_direccion         VARCHAR(200),
+    IN p_ciudad_id         INT,
+    IN p_telefono          VARCHAR(20),
+    IN p_email_personal    VARCHAR(100),
+    IN p_email_corporativo VARCHAR(100),
+    IN p_password_hash     VARCHAR(255),
+    OUT p_nuevo_id         INT
+)
+BEGIN
+    INSERT INTO usuarios(
+        rol_principal_id, tipo_documento_id, num_documento,
+        nombres, apellidos, direccion, ciudad_id,
+        telefono, email_personal, email_corporativo, password_hash
+    ) VALUES(
+        p_rol_principal_id, p_tipo_doc_id, p_num_doc,
+        p_nombres, p_apellidos, p_direccion, p_ciudad_id,
+        p_telefono, p_email_personal, p_email_corporativo, p_password_hash
+    );
+
+    SET p_nuevo_id = LAST_INSERT_ID();
+
+    -- Asignar rol principal automáticamente en tabla puente
+    INSERT INTO usuario_rol(usuario_id, rol_id)
+    VALUES(p_nuevo_id, p_rol_principal_id);
+
+    INSERT INTO logs(usuario_id, tabla, operacion, registro_id, descripcion, nivel)
+    VALUES(NULL, 'usuarios', 'INSERT', p_nuevo_id,
+           CONCAT('Usuario creado: ', p_email_corporativo), 'INFO');
+END$$
+
+-- ─────────────────────────────────────────────────────────
+CREATE PROCEDURE sp_actualizar_usuario(
+    IN p_id         INT,
+    IN p_nombres    VARCHAR(100),
+    IN p_apellidos  VARCHAR(100),
+    IN p_direccion  VARCHAR(200),
+    IN p_ciudad_id  INT,
+    IN p_telefono   VARCHAR(20),
+    IN p_foto_url   VARCHAR(255),
+    IN p_usuario_id INT   -- quien ejecuta la acción
+)
+BEGIN
+    UPDATE usuarios SET
+        nombres   = p_nombres,
+        apellidos = p_apellidos,
+        direccion = p_direccion,
+        ciudad_id = p_ciudad_id,
+        telefono  = p_telefono,
+        foto_url  = p_foto_url
+    WHERE id = p_id;
+
+    INSERT INTO logs(usuario_id, tabla, operacion, registro_id, descripcion, nivel)
+    VALUES(p_usuario_id, 'usuarios', 'UPDATE', p_id,
+           CONCAT('Usuario actualizado ID: ', p_id), 'INFO');
+END$$
+
+-- ─────────────────────────────────────────────────────────
+CREATE PROCEDURE sp_desactivar_usuario(
+    IN p_id         INT,
+    IN p_usuario_id INT
+)
+BEGIN
+    UPDATE usuarios SET estado = '0' WHERE id = p_id;
+
+    INSERT INTO logs(usuario_id, tabla, operacion, registro_id, descripcion, nivel)
+    VALUES(p_usuario_id, 'usuarios', 'UPDATE', p_id,
+           CONCAT('Usuario desactivado ID: ', p_id), 'WARNING');
+END$$
+
+
