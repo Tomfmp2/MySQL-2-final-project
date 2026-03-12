@@ -168,3 +168,52 @@ LEFT JOIN personas  pe ON pe.cliente_id = cl.id
 LEFT JOIN empresas  em ON em.cliente_id = cl.id;
 
 
+-- ==========================================================
+-- MÓDULO: COMPRAS
+-- ==========================================================
+
+-- Detalle completo de facturas de compra
+CREATE OR REPLACE VIEW v_facturas_compra AS
+SELECT
+    fc.id                                                       AS factura_id,
+    fc.num_factura,
+    fc.fecha,
+    pv.razon_social                                             AS proveedor,
+    CONCAT(u.nombres,' ',u.apellidos)                           AS usuario,
+    tp.nombre                                                   AS tipo_pago,
+    SUM(dfc.cantidad * dfc.valor_unitario)                      AS subtotal,
+    SUM(dfc.cantidad * dfc.valor_unitario * (dfc.iva/100))      AS total_iva,
+    ROUND(SUM(dfc.cantidad * dfc.valor_unitario * (1+dfc.iva/100)), 2) AS total_final,
+    fc.estado,
+    fc.observaciones
+FROM factura_compra fc
+JOIN proveedores pv ON pv.id = fc.proveedor_id
+JOIN usuarios    u  ON u.id  = fc.usuario_id
+JOIN tipo_pago   tp ON tp.id = fc.tipo_pago_id
+JOIN detalle_factura_compra dfc ON dfc.factura_compra_id = fc.id
+GROUP BY fc.id, fc.num_factura, fc.fecha, pv.razon_social,
+         u.nombres, u.apellidos, tp.nombre, fc.estado, fc.observaciones;
+
+-- ─────────────────────────────────────────────────────────
+-- Devoluciones de compra con detalle
+CREATE OR REPLACE VIEW v_devoluciones_compra AS
+SELECT
+    dc.id                                                       AS devolucion_id,
+    dc.fecha,
+    fc.num_factura,
+    pv.razon_social                                             AS proveedor,
+    CONCAT(u.nombres,' ',u.apellidos)                           AS usuario,
+    p.nombre                                                    AS producto,
+    ddc.cantidad                                                AS cantidad_devuelta,
+    dfc.valor_unitario,
+    ROUND(ddc.cantidad * dfc.valor_unitario * (1+dfc.iva/100), 2) AS valor_devuelto,
+    dc.observaciones
+FROM devolucion_compra dc
+JOIN factura_compra           fc  ON fc.id  = dc.factura_compra_id
+JOIN usuarios                 u   ON u.id   = dc.usuario_id
+JOIN proveedores              pv  ON pv.id  = fc.proveedor_id
+JOIN detalle_devolucion_compra ddc ON ddc.devolucion_compra_id = dc.id
+JOIN detalle_factura_compra   dfc ON dfc.id = ddc.detalle_factura_compra_id
+JOIN productos                p   ON p.id   = dfc.producto_id;
+
+
