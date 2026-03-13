@@ -1,15 +1,5 @@
 USE mini_erp;
 
--- ==========================================================
--- EVENTOS PROGRAMADOS
--- TechDistrib S.A.S — ERP de Gestión Comercial
---
--- Requisito previo: el Event Scheduler debe estar activo.
--- Verificar con:  SHOW VARIABLES LIKE 'event_scheduler';
--- Activar con:    SET GLOBAL event_scheduler = ON;
---                 (o agregar event_scheduler=ON en my.cnf)
--- ==========================================================
-
 
 -- ##########################################################
 -- EVENTO 1: REPORTE MENSUAL DE VENTAS
@@ -385,12 +375,11 @@ SHOW CREATE EVENT evt_reporte_mensual_ventas\G
 SHOW CREATE EVENT evt_reporte_mensual_rotacion\G
 
 
--- ##########################################################
--- EJECUCIÓN MANUAL (para probar sin esperar el mes)
--- ##########################################################
+
+-- EJECUCIÓN MANUAL 
+
 
 -- Disparar el evento de ventas ahora mismo
--- (simula lo que haría el scheduler automáticamente)
 CALL sys.execute_prepared_stmt(
     (SELECT event_definition
      FROM   information_schema.EVENTS
@@ -398,7 +387,6 @@ CALL sys.execute_prepared_stmt(
        AND  EVENT_NAME   = 'evt_reporte_mensual_ventas')
 );
 
--- O ejecutar directamente el bloque equivalente para pruebas:
 -- ─── PRUEBA RÁPIDA EVENTO 1 ──────────────────────────────
 SET @ini = DATE_FORMAT(NOW() - INTERVAL 1 MONTH, '%Y-%m-01');
 SET @fin = LAST_DAY(NOW() - INTERVAL 1 MONTH);
