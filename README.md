@@ -7,6 +7,16 @@
 
 ---
 
+## 🧮 Modelo Entidad–Relación (ERD)
+
+> En esta sección se presenta el diagrama entidad–relación del sistema TechDistrib ERP, que resume las entidades principales, sus atributos clave y relaciones.
+
+<!-- ERD IMAGE HERE -->
+![Modelo ERD TechDistrib](techdistrib-erd.png)
+
+
+---
+
 ## 🏢 Caso de estudio
 
 ### El problema
